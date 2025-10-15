@@ -238,7 +238,10 @@ class ExchangeAdapter(ABC):
         # Calculate transaction cost (0.1% default fee)
         transaction_cost_rate = Decimal('0.001')
         transaction_cost_value = fill_price.as_decimal() * fill_quantity.as_decimal() * transaction_cost_rate
-        transaction_cost = Money(transaction_cost_value, fill_price.currency if hasattr(fill_price, 'currency') else None)
+        # Use USD as default currency for transaction costs
+        from nautilus_trader.model.objects import Currency
+        usd = Currency.from_str('USD')
+        transaction_cost = Money(transaction_cost_value, usd)
         
         return SimulatedFill(
             order_id=order.id,

@@ -19,7 +19,7 @@ from crypto_trading_engine.core.risk_manager import RiskLevel, RiskAlert, RiskAs
 
 # Test implementations of abstract classes
 
-class TestStrategy(Strategy):
+class MockStrategy(Strategy):
     """Test implementation of Strategy."""
     
     def __init__(self, strategy_id: StrategyId, config: Dict[str, Any], trading_mode: TradingMode = TradingMode.BACKTEST):
@@ -50,7 +50,7 @@ class TestStrategy(Strategy):
         self.positions_closed.append(position)
 
 
-class TestExchangeAdapter(ExchangeAdapter):
+class MockExchangeAdapter(ExchangeAdapter):
     """Test implementation of ExchangeAdapter."""
     
     def __init__(self, venue: Venue, config: Dict[str, Any], trading_mode: TradingMode = TradingMode.BACKTEST):
@@ -97,7 +97,7 @@ class TestExchangeAdapter(ExchangeAdapter):
         return True
 
 
-class TestRiskManager(RiskManager):
+class MockRiskManager(RiskManager):
     """Test implementation of RiskManager."""
     
     def __init__(self, config: Dict[str, Any], trading_mode: TradingMode = TradingMode.BACKTEST):
@@ -140,7 +140,7 @@ class TestStrategy:
         strategy_id = StrategyId("test-strategy")
         config = {"param1": "value1"}
         
-        strategy = TestStrategy(strategy_id, config)
+        strategy = MockStrategy(strategy_id, config)
         
         assert strategy.strategy_id == strategy_id
         assert strategy.config == config
@@ -153,7 +153,7 @@ class TestStrategy:
     def test_strategy_lifecycle(self):
         """Test strategy start/stop lifecycle."""
         strategy_id = StrategyId("test-strategy")
-        strategy = TestStrategy(strategy_id, {})
+        strategy = MockStrategy(strategy_id, {})
         
         # Test start
         strategy.start()
@@ -168,7 +168,7 @@ class TestStrategy:
     def test_trading_mode_change(self):
         """Test trading mode changes."""
         strategy_id = StrategyId("test-strategy")
-        strategy = TestStrategy(strategy_id, {})
+        strategy = MockStrategy(strategy_id, {})
         
         # Change mode when not running
         strategy.set_trading_mode(TradingMode.PAPER)
@@ -182,7 +182,7 @@ class TestStrategy:
     def test_instrument_management(self):
         """Test instrument management."""
         strategy_id = StrategyId("test-strategy")
-        strategy = TestStrategy(strategy_id, {})
+        strategy = MockStrategy(strategy_id, {})
         
         venue = Venue("BINANCE")
         instrument_id = InstrumentId.from_str("BTCUSDT.BINANCE")
@@ -217,7 +217,7 @@ class TestExchangeAdapter:
         venue = Venue("BINANCE")
         config = {"api_key": "test_key"}
         
-        adapter = TestExchangeAdapter(venue, config)
+        adapter = MockExchangeAdapter(venue, config)
         
         assert adapter.venue == venue
         assert adapter.config == config
@@ -228,7 +228,7 @@ class TestExchangeAdapter:
     async def test_adapter_connection(self):
         """Test adapter connection lifecycle."""
         venue = Venue("BINANCE")
-        adapter = TestExchangeAdapter(venue, {})
+        adapter = MockExchangeAdapter(venue, {})
         
         # Test connect
         result = await adapter.connect()
@@ -244,7 +244,7 @@ class TestExchangeAdapter:
     def test_trading_mode_change(self):
         """Test trading mode changes."""
         venue = Venue("BINANCE")
-        adapter = TestExchangeAdapter(venue, {})
+        adapter = MockExchangeAdapter(venue, {})
         
         # Change mode when not connected
         adapter.set_trading_mode(TradingMode.PAPER)
@@ -254,7 +254,7 @@ class TestExchangeAdapter:
     async def test_order_operations(self):
         """Test order operations."""
         venue = Venue("BINANCE")
-        adapter = TestExchangeAdapter(venue, {})
+        adapter = MockExchangeAdapter(venue, {})
         
         # Create test order
         instrument_id = InstrumentId.from_str("BTCUSDT.BINANCE")
@@ -297,7 +297,7 @@ class TestExchangeAdapter:
     def test_order_simulation(self):
         """Test order execution simulation."""
         venue = Venue("BINANCE")
-        adapter = TestExchangeAdapter(venue, {})
+        adapter = MockExchangeAdapter(venue, {})
         adapter.set_trading_mode(TradingMode.PAPER)
         
         # Create test order
@@ -369,7 +369,7 @@ class TestTradingModeManager:
         """Test strategy registration."""
         manager = TradingModeManager()
         strategy_id = StrategyId("test-strategy")
-        strategy = TestStrategy(strategy_id, {})
+        strategy = MockStrategy(strategy_id, {})
         
         # Register strategy
         manager.register_strategy(strategy)
@@ -384,7 +384,7 @@ class TestTradingModeManager:
         """Test adapter registration."""
         manager = TradingModeManager()
         venue = Venue("BINANCE")
-        adapter = TestExchangeAdapter(venue, {})
+        adapter = MockExchangeAdapter(venue, {})
         
         # Register adapter
         manager.register_adapter(adapter)
@@ -399,7 +399,7 @@ class TestTradingModeManager:
         """Test strategy promotion workflow."""
         manager = TradingModeManager()
         strategy_id = StrategyId("test-strategy")
-        strategy = TestStrategy(strategy_id, {})
+        strategy = MockStrategy(strategy_id, {})
         
         manager.register_strategy(strategy)
         
@@ -436,7 +436,7 @@ class TestRiskManager:
             "max_daily_trades": 100
         }
         
-        risk_manager = TestRiskManager(config)
+        risk_manager = MockRiskManager(config)
         
         assert risk_manager.config == config
         assert risk_manager.trading_mode == TradingMode.BACKTEST
@@ -447,7 +447,7 @@ class TestRiskManager:
     
     def test_risk_manager_lifecycle(self):
         """Test risk manager start/stop."""
-        risk_manager = TestRiskManager({})
+        risk_manager = MockRiskManager({})
         
         # Start
         risk_manager.start()
@@ -459,7 +459,7 @@ class TestRiskManager:
     
     def test_position_monitoring(self):
         """Test position risk monitoring."""
-        risk_manager = TestRiskManager({})
+        risk_manager = MockRiskManager({})
         
         # Create test position
         venue = Venue("BINANCE")
@@ -504,7 +504,7 @@ class TestRiskManager:
     
     def test_order_risk_checking(self):
         """Test order risk checking."""
-        risk_manager = TestRiskManager({})
+        risk_manager = MockRiskManager({})
         
         # Create test order
         venue = Venue("BINANCE")
@@ -544,7 +544,7 @@ class TestRiskManager:
     
     def test_risk_alerts(self):
         """Test risk alert system."""
-        risk_manager = TestRiskManager({})
+        risk_manager = MockRiskManager({})
         
         # Create alert
         alert = risk_manager._create_alert(
