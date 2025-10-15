@@ -9,7 +9,7 @@
   - _Requirements: 1.1, 1.2_
 
 - [-] 2. Implement core data models and trading mode infrastructure
-  - [x] 2.1 Create trading mode and data models
+  - [-] 2.1 Create trading mode and data models
     - Write TradingMode enum and BacktestResults data class
     - Implement Position, Order, and Instrument data classes with simulation support
     - Create LiquidityPosition and UniswapPool models for DeFi operations
