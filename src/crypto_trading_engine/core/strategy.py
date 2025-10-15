@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 
 from nautilus_trader.model.identifiers import StrategyId
-from nautilus_trader.model.data import Data
+from nautilus_trader.model.data import QuoteTick
 
 from ..models.trading_mode import TradingMode, BacktestResults
 from ..models.core import Position, Order, Instrument
@@ -64,7 +64,7 @@ class Strategy(ABC):
         pass
     
     @abstractmethod
-    def on_market_data(self, data: Data) -> None:
+    def on_market_data(self, data: QuoteTick) -> None:
         """
         Called when market data is received.
         

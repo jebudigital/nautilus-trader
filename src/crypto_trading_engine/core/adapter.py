@@ -9,7 +9,7 @@ from decimal import Decimal
 
 from nautilus_trader.model.identifiers import Venue
 from nautilus_trader.model.objects import Money, Price, Quantity
-from nautilus_trader.model.data import Data
+from nautilus_trader.model.data import QuoteTick
 
 from ..models.trading_mode import TradingMode
 from ..models.core import Order, Position, Instrument, SimulatedFill
@@ -48,7 +48,7 @@ class ExchangeAdapter(ABC):
         self.orders: Dict[str, Order] = {}
         
         # Callbacks for events
-        self.on_market_data_callback: Optional[Callable[[Data], None]] = None
+        self.on_market_data_callback: Optional[Callable[[QuoteTick], None]] = None
         self.on_order_filled_callback: Optional[Callable[[Order, SimulatedFill], None]] = None
         self.on_position_update_callback: Optional[Callable[[Position], None]] = None
         self.on_error_callback: Optional[Callable[[Exception], None]] = None
@@ -191,7 +191,7 @@ class ExchangeAdapter(ABC):
     
     def set_callbacks(
         self,
-        on_market_data: Optional[Callable[[Data], None]] = None,
+        on_market_data: Optional[Callable[[QuoteTick], None]] = None,
         on_order_filled: Optional[Callable[[Order, SimulatedFill], None]] = None,
         on_position_update: Optional[Callable[[Position], None]] = None,
         on_error: Optional[Callable[[Exception], None]] = None
@@ -205,4 +205,104 @@ class ExchangeAdapter(ABC):
             on_position_update: Position update callback
             on_error: Error callback
         """
-        self.on_market_da
+        self.on_market_data_callback = on_market_data
+        self.on_order_filled_callback = on_order_filled
+        self.on_position_update_callback = on_position_update
+        self.on_error_callback = on_error
+    
+    def simulate_order_execution(self, order: Order, market_price: Price) -> SimulatedFill:
+        """
+        Simulate order execution for paper trading.
+        
+        Args:
+            order: Order to simulate
+            market_price: Current market price
+            
+        Returns:
+            Simulated fill result
+        """
+        if self.trading_mode == TradingMode.LIVE:
+            raise RuntimeError("Cannot simulate execution in live trading mode")
+        
+        # Simple simulation - can be overridden for more sophisticated logic
+        fill_price = market_price
+        fill_quantity = order.quantity
+        slippage = Decimal('0.001')  # 0.1% default slippage
+        
+        # Apply slippage
+        if order.side.name == 'BUY':
+            fill_price = Price(fill_price.as_decimal() * (1 + slippage), fill_price.precision)
+        else:
+            fill_price = Price(fill_price.as_decimal() * (1 - slippage), fill_price.precision)
+        
+        # Calculate transaction cost (0.1% default fee)
+        transaction_cost_rate = Decimal('0.001')
+        transaction_cost_value = fill_price.as_decimal() * fill_quantity.as_decimal() * transaction_cost_rate
+        transaction_cost = Money(transaction_cost_value, fill_price.currency if hasattr(fill_price, 'currency') else None)
+        
+        return SimulatedFill(
+            order_id=order.id,
+            fill_price=fill_price,
+            fill_quantity=fill_quantity,
+            fill_time=datetime.now(),
+            slippage=slippage,
+            transaction_cost=transaction_cost,
+            venue=self.venue
+        )
+    
+    def validate_order(self, order: Order) -> bool:
+        """
+        Validate an order before submission.
+        
+        Args:
+            order: Order to validate
+            
+        Returns:
+            True if order is valid, False otherwise
+        """
+        try:
+            order.validate()
+            
+            # Check if instrument is supported
+            instrument = self.instruments.get(str(order.instrument.id))
+            if not instrument:
+                return False
+            
+            # Additional validation can be added here
+            return True
+            
+        except Exception:
+            return False
+    
+    def get_connection_status(self) -> Dict[str, Any]:
+        """
+        Get connection status information.
+        
+        Returns:
+            Dictionary with connection status details
+        """
+        return {
+            "venue": str(self.venue),
+            "trading_mode": self.trading_mode.value,
+            "is_connected": self.is_connected,
+            "instrument_count": len(self.instruments),
+            "position_count": len(self.positions),
+            "order_count": len(self.orders)
+        }
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert adapter to dictionary representation.
+        
+        Returns:
+            Dictionary representation of the adapter
+        """
+        return {
+            "venue": str(self.venue),
+            "config": self.config,
+            "trading_mode": self.trading_mode.value,
+            "is_connected": self.is_connected,
+            "instruments": {k: v.to_dict() for k, v in self.instruments.items()},
+            "positions": {k: v.to_dict() for k, v in self.positions.items()},
+            "orders": {k: v.to_dict() for k, v in self.orders.items()}
+        }
