@@ -63,9 +63,10 @@ class UniswapAdapter(ExchangeAdapter):
         venue = Venue("UNISWAP")
         super().__init__(venue, config, trading_mode)
         
-        # Configuration
-        self.web3_provider_url = config.get("web3_provider_url", "")
-        self.private_key = config.get("private_key", "")
+        # Configuration - load from environment if not provided
+        import os
+        self.web3_provider_url = config.get("web3_provider_url") or os.getenv("WEB3__PROVIDER_URL", "")
+        self.private_key = config.get("private_key") or os.getenv("WEB3__PRIVATE_KEY", "")
         self.network = config.get("network", "mainnet")
         
         # Contract addresses (mainnet defaults)

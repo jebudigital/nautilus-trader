@@ -48,6 +48,12 @@ class BinanceAdapter(ExchangeAdapter):
                 - ws_url: WebSocket URL
             trading_mode: Current trading mode
         """
+        # Load from environment if not provided
+        if not config.get('api_key'):
+            import os
+            config['api_key'] = os.getenv('BINANCE__API_KEY')
+            config['api_secret'] = os.getenv('BINANCE__API_SECRET')
+            config['testnet'] = os.getenv('BINANCE__SANDBOX', 'true').lower() == 'true'
         venue = Venue("BINANCE")
         super().__init__(venue, config, trading_mode)
         
