@@ -26,7 +26,7 @@
     - Write unit tests for all interface contracts
     - _Requirements: 1.1, 1.6, 4.1, 9.1, 9.2_
 
-- [-] 3. Build exchange adapter infrastructure
+- [x] 3. Build exchange adapter infrastructure
   - [x] 3.1 Implement Binance adapter
     - Create BinanceAdapter class with REST and WebSocket connectivity
     - Implement order submission, cancellation, and status tracking
@@ -35,7 +35,7 @@
     - Write comprehensive unit tests for all adapter methods
     - _Requirements: 1.3, 5.1, 5.2_
   
-  - [-] 3.2 Implement dYdX perpetual adapter
+  - [x] 3.2 Implement dYdX perpetual adapter
     - Create DydxAdapter class for perpetual contract trading
     - Implement position management and margin calculations
     - Add funding rate monitoring and historical data retrieval
@@ -43,7 +43,7 @@
     - Write unit tests covering all trading operations
     - _Requirements: 1.3, 3.1, 3.2, 5.1_
   
-  - [ ] 3.3 Implement Uniswap V3 adapter
+  - [x] 3.3 Implement Uniswap V3 adapter
     - Create UniswapAdapter class with Web3 integration
     - Implement liquidity provision and removal functions
     - Add pool analytics and fee calculation methods
