@@ -11,7 +11,7 @@ from decimal import Decimal
 from typing import Dict, Optional
 
 from nautilus_trader.trading.strategy import Strategy
-from nautilus_trader.model.data import QuoteTick, Bar
+from nautilus_trader.model.data import QuoteTick, Bar, FundingRateUpdate
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.enums import OrderSide, TimeInForce
 from nautilus_trader.model.orders import MarketOrder
@@ -84,7 +84,11 @@ class DeltaNeutralStrategy(Strategy):
         self.subscribe_quote_ticks(self.spot_instrument_id)
         self.subscribe_quote_ticks(self.perp_instrument_id)
         
-        # Subscribe to bars for funding rate calculation
+        # Subscribe to funding rates (proper Nautilus way)
+        self.subscribe_funding_rates(self.perp_instrument_id)
+        self.log.info(f"Subscribed to funding rates for {self.perp_instrument_id}")
+        
+        # Subscribe to bars for additional analysis
         from nautilus_trader.model.data import BarType, BarSpecification
         from nautilus_trader.model.enums import BarAggregation, PriceType, AggregationSource
         
@@ -99,6 +103,34 @@ class DeltaNeutralStrategy(Strategy):
             aggregation_source=AggregationSource.EXTERNAL
         )
         self.subscribe_bars(bar_type)
+    
+    def on_funding_rate(self, funding_rate: FundingRateUpdate):
+        """
+        Handle funding rate updates.
+        
+        This is the proper Nautilus handler for FundingRateUpdate.
+        Called when subscribed via subscribe_funding_rates().
+        
+        Args:
+            funding_rate: FundingRateUpdate object
+        """
+        if funding_rate.instrument_id == self.perp_instrument_id:
+            self.funding_rate = funding_rate.rate
+            
+            # Calculate APY for logging (funding paid 3x per day)
+            funding_apy = self.funding_rate * Decimal('3') * Decimal('365') * Decimal('100')
+            self.log.info(f"Funding rate updated: {self.funding_rate:.6f} ({funding_apy:.2f}% APY)")
+    
+    def on_data(self, data):
+        """
+        Handle generic data updates (fallback for custom data types).
+        
+        Args:
+            data: Data object
+        """
+        # Fallback handler for any custom data types
+        # FundingRateUpdate should go to on_funding_rate instead
+        self.log.debug(f"Received data: {type(data).__name__}")
     
     def on_stop(self):
         """Called when strategy stops."""
@@ -156,26 +188,29 @@ class DeltaNeutralStrategy(Strategy):
     
     def _evaluate_opportunity(self):
         """Evaluate if we should open/close/rebalance positions."""
-        # Get current positions
-        spot_position = self.portfolio.position(self.spot_instrument_id)
-        perp_position = self.portfolio.position(self.perp_instrument_id)
+        # Get current positions for instruments
+        spot_positions = self.cache.positions_open(instrument_id=self.spot_instrument_id)
+        perp_positions = self.cache.positions_open(instrument_id=self.perp_instrument_id)
+        
+        spot_position = spot_positions[0] if spot_positions else None
+        perp_position = perp_positions[0] if perp_positions else None
         
         # Calculate current delta
         spot_delta = Decimal('0')
         perp_delta = Decimal('0')
         
-        if spot_position and not spot_position.is_flat:
+        if spot_position and not spot_position.is_closed:
             spot_delta = Decimal(str(spot_position.quantity))
         
-        if perp_position and not perp_position.is_flat:
+        if perp_position and not perp_position.is_closed:
             # Perp short has negative delta
             perp_delta = -Decimal(str(perp_position.quantity))
         
         current_delta = spot_delta + perp_delta
         
         # Check if we have positions
-        has_positions = (spot_position and not spot_position.is_flat) or \
-                       (perp_position and not perp_position.is_flat)
+        has_positions = (spot_position and not spot_position.is_closed) or \
+                       (perp_position and not perp_position.is_closed)
         
         if not has_positions:
             # No positions - check if we should open
@@ -187,11 +222,31 @@ class DeltaNeutralStrategy(Strategy):
     
     def _check_entry_signal(self):
         """Check if we should enter a delta-neutral position."""
+        # Check if we have all required data
+        if not self.spot_price:
+            return
+        
+        if not self.perp_price:
+            return
+            
         if not self.funding_rate:
             return
         
         # Convert funding rate to APY (funding paid 3x per day)
         funding_apy = self.funding_rate * Decimal('3') * Decimal('365') * Decimal('100')
+        
+        # Log every 100 checks to avoid spam
+        if not hasattr(self, '_entry_check_count'):
+            self._entry_check_count = 0
+        
+        self._entry_check_count += 1
+        
+        if self._entry_check_count % 100 == 0:
+            self.log.info(
+                f"Entry check #{self._entry_check_count} - "
+                f"Spot: ${self.spot_price:.2f}, Perp: ${self.perp_price:.2f}, "
+                f"Funding APY: {funding_apy:.2f}%, Threshold: {self.config.min_funding_rate_apy}%"
+            )
         
         # Only enter if funding rate is attractive
         if funding_apy >= Decimal(str(self.config.min_funding_rate_apy)):
@@ -203,6 +258,15 @@ class DeltaNeutralStrategy(Strategy):
     def _open_delta_neutral_position(self):
         """Open delta-neutral position (buy spot + short perp)."""
         if not self.spot_price or not self.perp_price:
+            self.log.warning("Cannot open position: missing price data")
+            return
+        
+        # Verify we have recent quotes for both instruments
+        spot_quote = self.cache.quote_tick(self.spot_instrument_id)
+        perp_quote = self.cache.quote_tick(self.perp_instrument_id)
+        
+        if not spot_quote or not perp_quote:
+            self.log.warning(f"Cannot open position: missing quotes (spot={spot_quote is not None}, perp={perp_quote is not None})")
             return
         
         # Calculate position size
@@ -214,15 +278,24 @@ class DeltaNeutralStrategy(Strategy):
         self.log.info(f"  Size: ${position_size_usd:.2f}")
         self.log.info(f"  Quantity: {quantity:.6f}")
         
+        # Get instruments from cache
+        spot_instrument = self.cache.instrument(self.spot_instrument_id)
+        perp_instrument = self.cache.instrument(self.perp_instrument_id)
+        
+        if not spot_instrument or not perp_instrument:
+            self.log.error("Instruments not found in cache")
+            return
+        
+        # Convert to proper Quantity with instrument precision
+        spot_quantity = spot_instrument.make_qty(quantity)
+        perp_quantity = perp_instrument.make_qty(quantity)
+        
         # Submit orders
         # 1. Buy spot
         spot_order = self.order_factory.market(
             instrument_id=self.spot_instrument_id,
             order_side=OrderSide.BUY,
-            quantity=self.instrument_provider.get_quantity(
-                self.spot_instrument_id,
-                float(quantity)
-            ),
+            quantity=spot_quantity,
             time_in_force=TimeInForce.GTC
         )
         self.submit_order(spot_order)
@@ -231,10 +304,7 @@ class DeltaNeutralStrategy(Strategy):
         perp_order = self.order_factory.market(
             instrument_id=self.perp_instrument_id,
             order_side=OrderSide.SELL,
-            quantity=self.instrument_provider.get_quantity(
-                self.perp_instrument_id,
-                float(quantity)
-            ),
+            quantity=perp_quantity,
             time_in_force=TimeInForce.GTC
         )
         self.submit_order(perp_order)
@@ -258,18 +328,22 @@ class DeltaNeutralStrategy(Strategy):
     
     def _rebalance_position(self, current_delta: Decimal):
         """Rebalance position to restore delta neutrality."""
+        # Get instrument from cache
+        spot_instrument = self.cache.instrument(self.spot_instrument_id)
+        if not spot_instrument:
+            self.log.error("Spot instrument not found in cache")
+            return
+        
         # Rebalance by adjusting spot position (simpler than perp)
         rebalance_amount = abs(current_delta) / Decimal('2')
+        rebalance_qty = spot_instrument.make_qty(rebalance_amount)
         
         if current_delta > 0:
             # Too much long - sell some spot
             order = self.order_factory.market(
                 instrument_id=self.spot_instrument_id,
                 order_side=OrderSide.SELL,
-                quantity=self.instrument_provider.get_quantity(
-                    self.spot_instrument_id,
-                    float(rebalance_amount)
-                ),
+                quantity=rebalance_qty,
                 time_in_force=TimeInForce.GTC
             )
             self.submit_order(order)
@@ -280,10 +354,7 @@ class DeltaNeutralStrategy(Strategy):
             order = self.order_factory.market(
                 instrument_id=self.spot_instrument_id,
                 order_side=OrderSide.BUY,
-                quantity=self.instrument_provider.get_quantity(
-                    self.spot_instrument_id,
-                    float(rebalance_amount)
-                ),
+                quantity=rebalance_qty,
                 time_in_force=TimeInForce.GTC
             )
             self.submit_order(order)

@@ -259,7 +259,11 @@ async def load_data(start_date: str, end_date: str, output_dir: Path):
     # Load data
     print("\n🔄 Fetching data from APIs...")
     async with HistoricalDataLoader() as loader:
-        data = await loader.load_all_data(days=days)
+        data = await loader.load_all_data(
+            days=days,
+            start_date=start,
+            end_date=end
+        )
     
     # Save to Parquet
     save_to_parquet(data, start_date, end_date, output_dir)
@@ -357,6 +361,7 @@ Examples:
     parser.add_argument('--days', type=int, help='Number of days from today (alternative to start/end)')
     parser.add_argument('--output', type=str, default='data/historical/parquet', help='Output directory')
     parser.add_argument('--list', action='store_true', help='List available data files')
+    parser.add_argument('--network', type=str, choices=['testnet', 'mainnet'], help='dYdX network (overrides .env)')
     
     args = parser.parse_args()
     

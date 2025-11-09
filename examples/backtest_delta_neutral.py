@@ -80,21 +80,21 @@ async def run_backtest(start_date: str = None, end_date: str = None):
     # Add instruments
     print("\n📊 Loading instruments...")
     
-    # Binance BTCUSDT spot (use 6 decimal precision to match generated ticks)
+    # Binance BTCUSDT spot (real exchange specifications)
     btc_spot = CurrencyPair(
         instrument_id=InstrumentId(Symbol("BTCUSDT"), Venue("BINANCE")),
         raw_symbol=Symbol("BTCUSDT"),
         base_currency=BTC,
         quote_currency=USDT,
-        price_precision=6,  # Match generated tick precision
-        size_precision=5,
-        price_increment=Price.from_str("0.000001"),
+        price_precision=2,  # Binance uses 2 decimals for BTCUSDT
+        size_precision=5,   # Binance uses 5 decimals for BTC quantity
+        price_increment=Price.from_str("0.01"),
         size_increment=Quantity.from_str("0.00001"),
         lot_size=Quantity.from_str("0.00001"),
         max_quantity=Quantity.from_str("9000.0"),
         min_quantity=Quantity.from_str("0.00001"),
         max_price=Price.from_str("1000000.0"),
-        min_price=Price.from_str("0.000001"),
+        min_price=Price.from_str("0.01"),
         margin_init=Decimal("0"),
         margin_maint=Decimal("0"),
         maker_fee=Decimal("0.001"),
@@ -105,7 +105,7 @@ async def run_backtest(start_date: str = None, end_date: str = None):
     engine.add_instrument(btc_spot)
     print(f"  ✅ Added {btc_spot.id}")
     
-    # dYdX BTC-USD perpetual (use 3 decimal precision to match generated ticks)
+    # dYdX BTC-USD perpetual (real exchange specifications)
     btc_perp = CryptoPerpetual(
         instrument_id=InstrumentId(Symbol("BTC-USD"), Venue("DYDX_V4")),
         raw_symbol=Symbol("BTC-USD"),
@@ -113,14 +113,14 @@ async def run_backtest(start_date: str = None, end_date: str = None):
         quote_currency=USD,
         settlement_currency=USD,
         is_inverse=False,
-        price_precision=3,  # Match generated tick precision
-        size_precision=1,
-        price_increment=Price.from_str("0.001"),
-        size_increment=Quantity.from_str("0.1"),
+        price_precision=1,  # dYdX uses 1 decimal for BTC-USD
+        size_precision=4,   # dYdX uses 4 decimals for size
+        price_increment=Price.from_str("0.1"),
+        size_increment=Quantity.from_str("0.0001"),
         max_quantity=Quantity.from_str("1000.0"),
-        min_quantity=Quantity.from_str("0.1"),
+        min_quantity=Quantity.from_str("0.0001"),
         max_price=Price.from_str("1000000.0"),
-        min_price=Price.from_str("0.001"),
+        min_price=Price.from_str("0.1"),
         margin_init=Decimal("0.1"),
         margin_maint=Decimal("0.05"),
         maker_fee=Decimal("0.0002"),
@@ -176,9 +176,11 @@ async def run_backtest(start_date: str = None, end_date: str = None):
         engine.add_data(dydx_ticks)
         print(f"  ✅ Added {len(dydx_ticks)} dYdX quote ticks")
     
-    # Store funding rates for strategy
+    # Add funding rates as data (Nautilus FundingRateUpdate)
     funding_rates = data.get('dydx_funding', [])
-    print(f"  ✅ Loaded {len(funding_rates)} funding rates")
+    if funding_rates:
+        engine.add_data(funding_rates)
+        print(f"  ✅ Added {len(funding_rates)} funding rate events")
     
     # Create strategy
     print("\n🎯 Creating strategy...")
@@ -187,7 +189,7 @@ async def run_backtest(start_date: str = None, end_date: str = None):
         perp_instrument="BTC-USD.DYDX_V4",
         max_position_size_usd=5000.0,
         rebalance_threshold_pct=2.0,
-        min_funding_rate_apy=6.0,
+        min_funding_rate_apy=2.0,  # Realistic threshold (was 6.0, but rates rarely exceed 5%)
     )
     
     strategy = DeltaNeutralStrategy(config=strategy_config)
@@ -205,25 +207,128 @@ async def run_backtest(start_date: str = None, end_date: str = None):
         engine.run()
         
         # Get results
-        print("\n📊 Backtest Results:")
+        print("\n" + "="*60)
+        print("📊 BACKTEST RESULTS")
         print("="*60)
         
-        # Account reports
-        print("\n💰 Account Performance:")
-        print("\nBinance Account:")
-        print(engine.trader.generate_account_report(Venue("BINANCE")))
-        print("\ndYdX Account:")
-        print(engine.trader.generate_account_report(Venue("DYDX_V4")))
+        # Get account states
+        binance_account = engine.trader.generate_account_report(Venue("BINANCE"))
+        dydx_account = engine.trader.generate_account_report(Venue("DYDX_V4"))
         
-        # Order and position reports
-        print("\n📋 Trading Activity:")
-        print("\nOrder Fills:")
-        print(engine.trader.generate_order_fills_report())
-        print("\nPositions:")
-        print(engine.trader.generate_positions_report())
+        # Get order and position reports
+        order_fills = engine.trader.generate_order_fills_report()
+        positions = engine.trader.generate_positions_report()
+        
+        # Calculate summary statistics
+        print("\n💰 ACCOUNT SUMMARY")
+        print("-" * 60)
+        
+        # Parse account data
+        binance_start = 10000.0
+        dydx_start = 10000.0
+        
+        # Get final balances from the last row
+        if not binance_account.empty:
+            binance_end = float(binance_account.iloc[-1]['total'])
+        else:
+            binance_end = binance_start
+            
+        if not dydx_account.empty:
+            dydx_end = float(dydx_account.iloc[-1]['total'])
+        else:
+            dydx_end = dydx_start
+        
+        binance_pnl = binance_end - binance_start
+        dydx_pnl = dydx_end - dydx_start
+        total_pnl = binance_pnl + dydx_pnl
+        total_return = (total_pnl / (binance_start + dydx_start)) * 100
+        
+        print(f"\n📈 Binance (Spot):")
+        print(f"   Starting Balance:  ${binance_start:,.2f}")
+        print(f"   Ending Balance:    ${binance_end:,.2f}")
+        print(f"   P&L:               ${binance_pnl:+,.2f} ({(binance_pnl/binance_start)*100:+.2f}%)")
+        
+        print(f"\n📉 dYdX (Perpetual):")
+        print(f"   Starting Balance:  ${dydx_start:,.2f}")
+        print(f"   Ending Balance:    ${dydx_end:,.2f}")
+        print(f"   P&L:               ${dydx_pnl:+,.2f} ({(dydx_pnl/dydx_start)*100:+.2f}%)")
+        
+        print(f"\n💵 Combined Portfolio:")
+        print(f"   Starting Capital:  ${binance_start + dydx_start:,.2f}")
+        print(f"   Ending Capital:    ${binance_end + dydx_end:,.2f}")
+        print(f"   Total P&L:         ${total_pnl:+,.2f}")
+        print(f"   Total Return:      {total_return:+.2f}%")
+        
+        # Trading statistics
+        print("\n" + "-" * 60)
+        print("📋 TRADING STATISTICS")
+        print("-" * 60)
+        
+        num_fills = len(order_fills) if not order_fills.empty else 0
+        num_positions = len(positions) if not positions.empty else 0
+        
+        # Count closed positions
+        if not positions.empty and 'ts_closed' in positions.columns:
+            closed_positions = positions[positions['ts_closed'] > 0]
+            num_closed = len(closed_positions)
+        else:
+            num_closed = 0
+        
+        print(f"\n   Total Order Fills:     {num_fills:,}")
+        print(f"   Total Positions:       {num_positions:,}")
+        print(f"   Closed Positions:      {num_closed:,}")
+        print(f"   Open Positions:        {num_positions - num_closed:,}")
+        
+        # Calculate win rate if we have closed positions
+        if not positions.empty and 'realized_pnl' in positions.columns:
+            closed_pos = positions[positions['ts_closed'] > 0]
+            if len(closed_pos) > 0:
+                # Parse realized_pnl (format: "123.45 USD")
+                realized_pnls = []
+                for pnl_str in closed_pos['realized_pnl']:
+                    try:
+                        # Extract numeric value from string like "-5.00117965 USDT"
+                        pnl_value = float(str(pnl_str).split()[0])
+                        realized_pnls.append(pnl_value)
+                    except:
+                        pass
+                
+                if realized_pnls:
+                    winning_trades = sum(1 for pnl in realized_pnls if pnl > 0)
+                    losing_trades = sum(1 for pnl in realized_pnls if pnl < 0)
+                    total_trades = len(realized_pnls)
+                    win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+                    
+                    avg_win = sum(pnl for pnl in realized_pnls if pnl > 0) / winning_trades if winning_trades > 0 else 0
+                    avg_loss = sum(pnl for pnl in realized_pnls if pnl < 0) / losing_trades if losing_trades > 0 else 0
+                    
+                    print(f"\n   Winning Trades:        {winning_trades:,}")
+                    print(f"   Losing Trades:         {losing_trades:,}")
+                    print(f"   Win Rate:              {win_rate:.1f}%")
+                    if avg_win > 0:
+                        print(f"   Average Win:           ${avg_win:,.2f}")
+                    if avg_loss < 0:
+                        print(f"   Average Loss:          ${avg_loss:,.2f}")
+        
+        # Time period
+        print("\n" + "-" * 60)
+        print("📅 BACKTEST PERIOD")
+        print("-" * 60)
+        print(f"\n   Start Date:  {start_date}")
+        print(f"   End Date:    {end_date}")
+        print(f"   Duration:    {days} days")
+        
+        # Strategy parameters
+        print("\n" + "-" * 60)
+        print("⚙️  STRATEGY PARAMETERS")
+        print("-" * 60)
+        print(f"\n   Position Size:         ${strategy.config.max_position_size_usd:,.2f}")
+        print(f"   Min Funding APY:       {strategy.config.min_funding_rate_apy:.1f}%")
+        print(f"   Rebalance Threshold:   {strategy.config.rebalance_threshold_pct:.1f}%")
+        print(f"   Max Leverage:          {strategy.config.max_leverage:.1f}x")
         
         print("\n" + "="*60)
-        print("✅ Backtest Complete")
+        print("✅ BACKTEST COMPLETE")
         print("="*60)
     
     else:
