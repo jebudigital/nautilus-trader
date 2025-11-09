@@ -269,7 +269,8 @@ async def run_backtest(start_date: str = None, end_date: str = None):
         
         # Count closed positions
         if not positions.empty and 'ts_closed' in positions.columns:
-            closed_positions = positions[positions['ts_closed'] > 0]
+            # ts_closed is a datetime, check if it's not NaT (Not a Time)
+            closed_positions = positions[positions['ts_closed'].notna()]
             num_closed = len(closed_positions)
         else:
             num_closed = 0
@@ -281,7 +282,7 @@ async def run_backtest(start_date: str = None, end_date: str = None):
         
         # Calculate win rate if we have closed positions
         if not positions.empty and 'realized_pnl' in positions.columns:
-            closed_pos = positions[positions['ts_closed'] > 0]
+            closed_pos = positions[positions['ts_closed'].notna()] if 'ts_closed' in positions.columns else positions
             if len(closed_pos) > 0:
                 # Parse realized_pnl (format: "123.45 USD")
                 realized_pnls = []
