@@ -7,20 +7,9 @@ This module contains implementations of sophisticated trading strategies includi
 - Arbitrage strategies
 """
 
-from .uniswap_lending import UniswapLendingStrategy
-from .delta_neutral import DeltaNeutralStrategy, DeltaNeutralConfig
-from .models import (
-    UniswapPool, LiquidityPosition, PoolMetrics, 
-    ImpermanentLossCalculator, GasOptimizer
-)
+from .delta_neutral_nautilus import DeltaNeutralStrategy, DeltaNeutralConfig
 
 __all__ = [
-    'UniswapLendingStrategy',
     'DeltaNeutralStrategy',
     'DeltaNeutralConfig',
-    'UniswapPool',
-    'LiquidityPosition', 
-    'PoolMetrics',
-    'ImpermanentLossCalculator',
-    'GasOptimizer'
 ]

@@ -1,102 +1,82 @@
-# Crypto Algorithmic Trading Engine
+# Delta-Neutral Trading Strategy
 
-A sophisticated algorithmic trading engine built on the Nautilus framework for executing trading strategies across centralized exchanges (Binance) and decentralized protocols (Uniswap, dYdX).
+A delta-neutral trading strategy **built on Nautilus Trader framework** for executing market-neutral arbitrage across Binance (spot) and dYdX v4 (perpetuals).
 
-## Features
+## Architecture
 
-- **Multi-venue Trading**: Execute strategies across Binance, dYdX, and Uniswap
-- **Advanced Strategies**: 
-  - Uniswap V3 liquidity provision (professional-grade)
-  - Delta-neutral cross-venue arbitrage (NEW!)
-- **Risk Management**: Comprehensive risk controls and portfolio monitoring
-- **Real-time Execution**: Low-latency order execution and market data processing
-- **Backtesting**: Historical strategy testing and performance analysis
+**IMPORTANT**: This project uses Nautilus Trader properly:
+- ✅ Strategy inherits from `nautilus_trader.trading.strategy.Strategy`
+- ✅ Uses Nautilus `BacktestEngine` for backtesting
+- ✅ Uses Nautilus `TradingNode` for live/paper trading
+- ✅ Uses Nautilus adapters (Binance built-in, dYdX custom)
+- ✅ Event-driven architecture
+- ✅ Automatic mode switching (backtest → paper → live)
 
-## Installation
+## Strategy
 
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd crypto-algo-trading-engine
-```
+**Delta-Neutral**: Maintains zero directional exposure by:
+1. Buying spot on Binance
+2. Shorting perpetual on dYdX v4
+3. Collecting funding rate payments
+4. Rebalancing when delta deviates
 
-2. Install dependencies:
+**Profit Source**: Funding rate arbitrage (typically 5-20% APY)
+
+## Quick Start
+
+### 1. Install
 ```bash
 pip install -e .
 ```
 
-3. For development:
+### 2. Configure
+Edit `.env` with your API keys:
 ```bash
-pip install -e ".[dev]"
+# Binance
+BINANCE__API_KEY=your_key
+BINANCE__API_SECRET=your_secret
+BINANCE__SANDBOX=true  # testnet
+
+# dYdX v4
+DYDX__VERSION=v4
+DYDX__MNEMONIC=your metamask mnemonic
+DYDX__NETWORK=testnet
 ```
 
-## Configuration
+### 3. Run
 
-1. Copy the example environment file:
+**Backtest** (coming soon):
 ```bash
-cp .env.example .env
+python examples/backtest_delta_neutral.py
 ```
 
-2. Edit `.env` with your API keys and configuration:
-- Binance API credentials
-- dYdX API credentials  
-- Web3 provider URL and private key
-
-## Usage
-
-### Quick Start - Delta-Neutral Strategy
-
+**Paper Trading**:
 ```bash
-# Run the demo to see different risk profiles
-python3 examples/delta_neutral_demo.py
-
-# Run tests
-python3 -m pytest tests/test_delta_neutral.py -v
+python examples/paper_trade_delta_neutral.py
 ```
 
-See [Delta-Neutral Quick Start Guide](docs/delta_neutral_quickstart.md) for detailed setup.
-
-### Development Mode
+**Live Trading**:
 ```bash
-trading-engine --environment dev --log-level DEBUG
-```
-
-### Production Mode
-```bash
-trading-engine --environment prod --config config/custom.env
+python examples/live_trade_delta_neutral.py
 ```
 
 ## Project Structure
 
 ```
 src/crypto_trading_engine/
-├── __init__.py
-├── main.py                 # Main entry point
-├── adapters/              # Exchange and protocol adapters
-├── config/                # Configuration management
-├── core/                  # Core engine components
-├── models/                # Data models
-└── strategies/            # Trading strategies
+├── strategies/
+│   └── delta_neutral_nautilus.py  # Main strategy (Nautilus-based)
+├── adapters/
+│   ├── binance_nautilus_adapter.py  # Binance (uses Nautilus built-in)
+│   └── dydx_v4_rest_adapter.py      # dYdX v4 custom adapter
+└── config/
+    └── settings.py
 ```
 
-## Development
+## Migration Complete
 
-### Running Tests
-```bash
-pytest
-```
-
-### Code Formatting
-```bash
-black src/
-isort src/
-```
-
-### Type Checking
-```bash
-mypy src/
-```
+This project has been migrated to use Nautilus Trader properly. Previous custom implementations have been removed. All trading modes (backtest/paper/live) now use Nautilus infrastructure.
 
 ## License
 
-MIT License - see LICENSE file for details.
+MIT License

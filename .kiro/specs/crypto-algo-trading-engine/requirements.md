@@ -2,7 +2,18 @@
 
 ## Introduction
 
-This document outlines the requirements for a comprehensive crypto algorithmic trading engine built on the open-source Nautilus framework. The system will implement multiple sophisticated trading strategies including Uniswap lending, delta-neutral strategies across centralized exchanges (Binance) and decentralized perpetual platforms (dYdX). The engine will provide automated execution, risk management, and portfolio optimization across both centralized and decentralized finance protocols.
+This document outlines the requirements for a delta-neutral crypto trading strategy **BUILT ON** the Nautilus Trader framework. 
+
+**CRITICAL**: This project MUST use Nautilus Trader's core components:
+- ✅ Strategies MUST inherit from `nautilus_trader.trading.strategy.Strategy`
+- ✅ Adapters MUST use `nautilus_trader.adapters` (DataClient/ExecutionClient)
+- ✅ Backtesting MUST use `nautilus_trader.backtest.BacktestEngine`
+- ✅ Live/Paper trading MUST use `nautilus_trader.live.TradingNode`
+- ✅ NO custom strategy base classes
+- ✅ NO custom backtesting engines
+- ✅ NO reimplementation of Nautilus features
+
+The system implements a delta-neutral strategy across Binance (spot) and dYdX v4 (perpetuals).
 
 ## Requirements
 
