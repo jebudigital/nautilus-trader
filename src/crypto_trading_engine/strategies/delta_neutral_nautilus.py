@@ -76,13 +76,34 @@ class DeltaNeutralStrategy(Strategy):
         
     def on_start(self):
         """Called when strategy starts."""
-        self.log.info(f"Starting {self.__class__.__name__}")
-        self.log.info(f"Spot instrument: {self.spot_instrument_id}")
-        self.log.info(f"Perp instrument: {self.perp_instrument_id}")
+        print("\n" + "="*60)
+        print("🚀 STRATEGY ON_START CALLED")
+        print("="*60)
+        self.log.info("="*60)
+        self.log.info(f"🚀 STARTING DELTA NEUTRAL STRATEGY")
+        self.log.info("="*60)
+        self.log.info(f"Spot: {self.spot_instrument_id}")
+        self.log.info(f"Perp: {self.perp_instrument_id}")
+        self.log.info(f"Max Position: ${self.config.max_position_size_usd}")
+        self.log.info(f"Rebalance Threshold: {self.config.rebalance_threshold_pct}%")
+        
+        # Check existing positions
+        self.log.info("\n📊 Checking existing positions...")
+        spot_positions = self.cache.positions_open(venue=self.spot_instrument_id.venue)
+        perp_positions = self.cache.positions_open(venue=self.perp_instrument_id.venue)
+        
+        self.log.info(f"Binance positions: {len(list(spot_positions))}")
+        self.log.info(f"dYdX positions: {len(list(perp_positions))}")
+        
+        for pos in self.cache.positions_open():
+            self.log.info(f"  Existing: {pos.side} {pos.quantity} {pos.instrument_id}")
         
         # Subscribe to market data
+        self.log.info("\n📡 Subscribing to market data...")
         self.subscribe_quote_ticks(self.spot_instrument_id)
         self.subscribe_quote_ticks(self.perp_instrument_id)
+        self.log.info(f"  ✅ Subscribed to {self.spot_instrument_id}")
+        self.log.info(f"  ✅ Subscribed to {self.perp_instrument_id}")
         
         # Subscribe to funding rates (proper Nautilus way)
         self.subscribe_funding_rates(self.perp_instrument_id)
@@ -152,15 +173,30 @@ class DeltaNeutralStrategy(Strategy):
         
         if tick.instrument_id == self.spot_instrument_id:
             self.spot_price = mid_price
-            self.log.debug(f"Spot price updated: ${mid_price}")
+            # Only log every 20th price update
+            if not hasattr(self, '_spot_count'):
+                self._spot_count = 0
+            self._spot_count += 1
+            if self._spot_count % 20 == 0:
+                print(f"📊 Binance BTC: ${mid_price:.2f}")
         
         elif tick.instrument_id == self.perp_instrument_id:
             self.perp_price = mid_price
-            self.log.debug(f"Perp price updated: ${mid_price}")
+            if not hasattr(self, '_perp_count'):
+                self._perp_count = 0
+            self._perp_count += 1
+            if self._perp_count % 20 == 0:
+                print(f"📊 dYdX BTC: ${mid_price:.2f}")
         
-        # Check if we should take action
+        # Check if we should take action (sample every 10th quote to reduce spam)
         if self.spot_price and self.perp_price:
-            self._evaluate_opportunity()
+            if not hasattr(self, '_eval_count'):
+                self._eval_count = 0
+            self._eval_count += 1
+            
+            if self._eval_count % 10 == 0:
+                print(f"\n💡 Evaluating (check #{self._eval_count})...")
+                self._evaluate_opportunity()
     
     def on_bar(self, bar: Bar):
         """
@@ -186,6 +222,21 @@ class DeltaNeutralStrategy(Strategy):
             self.funding_rate = Decimal(str(event.funding_rate))
             self.log.info(f"Funding rate updated: {self.funding_rate}")
     
+    def on_order_accepted(self, event):
+        """Handle order accepted event."""
+        print(f"  ✅ Order accepted: {event.client_order_id}")
+        self.log.info(f"Order accepted: {event}")
+    
+    def on_order_rejected(self, event):
+        """Handle order rejected event."""
+        print(f"  ❌ Order rejected: {event.client_order_id} - {event.reason}")
+        self.log.error(f"Order rejected: {event}")
+    
+    def on_order_filled(self, event):
+        """Handle order filled event."""
+        print(f"  💰 Order filled: {event.client_order_id} - {event.last_qty} @ {event.last_px}")
+        self.log.info(f"Order filled: {event}")
+    
     def _evaluate_opportunity(self):
         """Evaluate if we should open/close/rebalance positions."""
         # Get current positions for instruments
@@ -201,22 +252,25 @@ class DeltaNeutralStrategy(Strategy):
         
         if spot_position and not spot_position.is_closed:
             spot_delta = Decimal(str(spot_position.quantity))
+            print(f"  📈 Binance: LONG {spot_delta} BTC")
         
         if perp_position and not perp_position.is_closed:
             # Perp short has negative delta
             perp_delta = -Decimal(str(perp_position.quantity))
+            print(f"  📉 dYdX: SHORT {abs(perp_delta)} BTC")
         
         current_delta = spot_delta + perp_delta
+        print(f"  ⚖️  Net Delta: {current_delta:.8f} BTC")
         
         # Check if we have positions
         has_positions = (spot_position and not spot_position.is_closed) or \
                        (perp_position and not perp_position.is_closed)
         
         if not has_positions:
-            # No positions - check if we should open
+            print("  ℹ️  No positions - checking entry signal")
             self._check_entry_signal()
         else:
-            # Have positions - check if we should rebalance or exit
+            print("  ✅ Have positions - checking rebalance")
             self._check_rebalance(current_delta, spot_delta, perp_delta)
             self._check_exit_signal()
     
@@ -224,40 +278,52 @@ class DeltaNeutralStrategy(Strategy):
         """Check if we should enter a delta-neutral position."""
         # Check if we have all required data
         if not self.spot_price:
+            print(f"  ⚠️  Missing spot price")
             return
         
         if not self.perp_price:
+            print(f"  ⚠️  Missing perp price")
             return
             
         if not self.funding_rate:
+            print(f"  ⚠️  Missing funding rate (waiting for data...)")
             return
         
         # Convert funding rate to APY (funding paid 3x per day)
         funding_apy = self.funding_rate * Decimal('3') * Decimal('365') * Decimal('100')
         
-        # Log every 100 checks to avoid spam
-        if not hasattr(self, '_entry_check_count'):
-            self._entry_check_count = 0
-        
-        self._entry_check_count += 1
-        
-        if self._entry_check_count % 100 == 0:
-            self.log.info(
-                f"Entry check #{self._entry_check_count} - "
-                f"Spot: ${self.spot_price:.2f}, Perp: ${self.perp_price:.2f}, "
-                f"Funding APY: {funding_apy:.2f}%, Threshold: {self.config.min_funding_rate_apy}%"
-            )
+        # Log entry checks
+        print(f"  💰 Funding APY: {funding_apy:.2f}% (need {self.config.min_funding_rate_apy}%)")
         
         # Only enter if funding rate is attractive
         if funding_apy >= Decimal(str(self.config.min_funding_rate_apy)):
-            self.log.info(f"Entry signal: Funding APY {funding_apy:.2f}% >= {self.config.min_funding_rate_apy}%")
+            print(f"  🚀 ENTRY SIGNAL! Funding APY {funding_apy:.2f}% >= {self.config.min_funding_rate_apy}%")
             self._open_delta_neutral_position()
         else:
-            self.log.debug(f"Funding APY {funding_apy:.2f}% below threshold")
+            print(f"  ⏸️  Waiting - funding too low")
     
     def _open_delta_neutral_position(self):
         """Open delta-neutral position (buy spot + short perp)."""
+        # Check if we have any open orders (don't submit more if orders are pending)
+        open_orders = list(self.cache.orders_open())
+        if open_orders:
+            print(f"  ⏳ Waiting for {len(open_orders)} pending orders to complete")
+            return
+        
+        # Check if we already have pending orders to avoid spam
+        if not hasattr(self, '_last_order_attempt_time'):
+            self._last_order_attempt_time = 0
+        
+        current_time = self.clock.timestamp_ns()
+        time_since_last_attempt = (current_time - self._last_order_attempt_time) / 1_000_000_000  # Convert to seconds
+        
+        if time_since_last_attempt < 30:  # Wait at least 30 seconds between attempts
+            return
+        
+        self._last_order_attempt_time = current_time
+        
         if not self.spot_price or not self.perp_price:
+            print("  ⚠️  Cannot open position: missing price data")
             self.log.warning("Cannot open position: missing price data")
             return
         
@@ -266,6 +332,7 @@ class DeltaNeutralStrategy(Strategy):
         perp_quote = self.cache.quote_tick(self.perp_instrument_id)
         
         if not spot_quote or not perp_quote:
+            print(f"  ⚠️  Cannot open position: missing quotes (spot={spot_quote is not None}, perp={perp_quote is not None})")
             self.log.warning(f"Cannot open position: missing quotes (spot={spot_quote is not None}, perp={perp_quote is not None})")
             return
         
@@ -274,6 +341,9 @@ class DeltaNeutralStrategy(Strategy):
         position_size_usd = Decimal(str(self.config.max_position_size_usd))
         quantity = position_size_usd / avg_price
         
+        print(f"  💼 Opening delta-neutral position:")
+        print(f"     Size: ${position_size_usd:.2f}")
+        print(f"     Quantity: {quantity:.6f} BTC")
         self.log.info(f"Opening delta-neutral position:")
         self.log.info(f"  Size: ${position_size_usd:.2f}")
         self.log.info(f"  Quantity: {quantity:.6f}")
@@ -283,12 +353,20 @@ class DeltaNeutralStrategy(Strategy):
         perp_instrument = self.cache.instrument(self.perp_instrument_id)
         
         if not spot_instrument or not perp_instrument:
+            print(f"  ❌ Instruments not found in cache!")
+            print(f"     Spot instrument: {spot_instrument}")
+            print(f"     Perp instrument: {perp_instrument}")
+            print(f"     Available instruments: {list(self.cache.instruments())}")
             self.log.error("Instruments not found in cache")
             return
         
         # Convert to proper Quantity with instrument precision
         spot_quantity = spot_instrument.make_qty(quantity)
         perp_quantity = perp_instrument.make_qty(quantity)
+        
+        print(f"     Submitting orders...")
+        print(f"     Spot: BUY {spot_quantity} {self.spot_instrument_id}")
+        print(f"     Perp: SELL {perp_quantity} {self.perp_instrument_id}")
         
         # Submit orders
         # 1. Buy spot
@@ -298,7 +376,11 @@ class DeltaNeutralStrategy(Strategy):
             quantity=spot_quantity,
             time_in_force=TimeInForce.GTC
         )
+        self.log.info(f"Submitting spot order: {spot_order}")
+        print(f"     🔵 Calling submit_order for spot...")
         self.submit_order(spot_order)
+        print(f"     ✅ Spot order submitted: {spot_order.client_order_id}")
+        print(f"     📊 Order state: {spot_order.status}")
         
         # 2. Short perp
         perp_order = self.order_factory.market(
@@ -307,7 +389,9 @@ class DeltaNeutralStrategy(Strategy):
             quantity=perp_quantity,
             time_in_force=TimeInForce.GTC
         )
+        self.log.info(f"Submitting perp order: {perp_order}")
         self.submit_order(perp_order)
+        print(f"     ✅ Perp order submitted: {perp_order.client_order_id}")
     
     def _check_rebalance(self, current_delta: Decimal, spot_delta: Decimal, perp_delta: Decimal):
         """Check if we need to rebalance to restore delta neutrality."""
