@@ -5,7 +5,9 @@ A sophisticated algorithmic trading engine built on the Nautilus framework for e
 ## Features
 
 - **Multi-venue Trading**: Execute strategies across Binance, dYdX, and Uniswap
-- **Advanced Strategies**: Uniswap lending and delta-neutral strategies
+- **Advanced Strategies**: 
+  - Uniswap V3 liquidity provision (professional-grade)
+  - Delta-neutral cross-venue arbitrage (NEW!)
 - **Risk Management**: Comprehensive risk controls and portfolio monitoring
 - **Real-time Execution**: Low-latency order execution and market data processing
 - **Backtesting**: Historical strategy testing and performance analysis
@@ -41,6 +43,18 @@ cp .env.example .env
 - Web3 provider URL and private key
 
 ## Usage
+
+### Quick Start - Delta-Neutral Strategy
+
+```bash
+# Run the demo to see different risk profiles
+python3 examples/delta_neutral_demo.py
+
+# Run tests
+python3 -m pytest tests/test_delta_neutral.py -v
+```
+
+See [Delta-Neutral Quick Start Guide](docs/delta_neutral_quickstart.md) for detailed setup.
 
 ### Development Mode
 ```bash

@@ -8,6 +8,7 @@ This module contains implementations of sophisticated trading strategies includi
 """
 
 from .uniswap_lending import UniswapLendingStrategy
+from .delta_neutral import DeltaNeutralStrategy, DeltaNeutralConfig
 from .models import (
     UniswapPool, LiquidityPosition, PoolMetrics, 
     ImpermanentLossCalculator, GasOptimizer
@@ -15,6 +16,8 @@ from .models import (
 
 __all__ = [
     'UniswapLendingStrategy',
+    'DeltaNeutralStrategy',
+    'DeltaNeutralConfig',
     'UniswapPool',
     'LiquidityPosition', 
     'PoolMetrics',
