@@ -466,42 +466,34 @@ class DydxV4ExecutionClient(LiveExecutionClient):
     
     async def _connect(self):
         """Connect to dYdX v4 for execution."""
-        print("🔵 dYdX execution client _connect called")
         self._log.info(f"Connecting dYdX v4 execution client ({self.network})...")
+        
+        # Set account ID for this execution client
+        account_id = AccountId(f"{self.venue}-{self.account_number}")
+        self._set_account_id(account_id)
+        self._log.info(f"Account ID set: {account_id}")
         
         # Verify wallet (dYdX V4 uses wallet, not API keys!)
         if not self.wallet_account:
-            print("⚠️  No wallet configured - running in paper trading mode")
             self._log.warning("No wallet configured - running in paper trading mode")
         else:
-            print(f"🔵 Wallet configured: {self.dydx_address}")
             # Test connection by fetching account
             try:
-                print("🔵 Fetching account...")
                 account = await self._get_account()
-                print(f"🔵 Account fetched: {account is not None}")
                 if account:
                     self._log.info(f"✅ Connected to dYdX account: {self.dydx_address}")
                     equity = account.get('subaccounts', [{}])[0].get('equity', '0')
                     self._log.info(f"   Account equity: ${equity}")
-                    print(f"✅ Account equity: ${equity}")
                     
                     # Generate account state so portfolio knows about this account
-                    print("🔵 Calling _update_account_state...")
                     await self._update_account_state()
-                    print("✅ _update_account_state completed")
                 else:
-                    print("⚠️  Account not found - creating dummy account state for testing")
                     self._log.warning("⚠️  Account not found - creating dummy account state")
                     # Create a dummy account state with zero balance so orders can be submitted
                     await self._create_dummy_account_state()
             except Exception as e:
-                print(f"❌ Failed to connect: {e}")
-                import traceback
-                traceback.print_exc()
                 self._log.error(f"Failed to connect: {e}")
         
-        print("✅ dYdX v4 execution client connected")
         self._log.info("dYdX v4 execution client connected")
     
     async def _update_account_state(self):
@@ -628,32 +620,32 @@ class DydxV4ExecutionClient(LiveExecutionClient):
         """Disconnect from dYdX v4."""
         self._log.info("dYdX v4 execution client disconnected")
     
-    def submit_order(self, command):
+    async def _submit_order_list(self, command):
         """
-        Submit an order (synchronous command handler).
+        Submit a list of orders (batch submission).
         
-        This is the method called by ExecutionEngine when routing SubmitOrder commands.
-        We schedule the async _submit_order as a task.
+        This is called by the base class when handling SubmitOrderList commands.
         
         Args:
-            command: SubmitOrder command containing the order
+            command: SubmitOrderList command containing the order list
         """
-        print(f"🔵 dYdX submit_order command handler called for {command.order.client_order_id}")
-        self._log.info(f"submit_order command received for {command.order.client_order_id}")
+        print(f"🔵 dYdX _submit_order_list called with command: {command}")
+        self._log.info(f"_submit_order_list called")
         
-        # Schedule the async submission
-        task = self._loop.create_task(self._submit_order(command.order))
+        # Submit each order by creating individual SubmitOrder commands
+        from nautilus_trader.execution.messages import SubmitOrder
+        from nautilus_trader.core.uuid import UUID4
         
-        # Add error handling
-        def handle_task_result(t):
-            try:
-                t.result()
-            except Exception as e:
-                self._log.error(f"Order submission failed: {e}")
-                import traceback
-                traceback.print_exc()
-        
-        task.add_done_callback(handle_task_result)
+        for order in command.list.orders:
+            # Create a SubmitOrder command for each order
+            submit_cmd = SubmitOrder(
+                trader_id=command.trader_id,
+                strategy_id=command.strategy_id,
+                order=order,
+                command_id=UUID4(),
+                ts_init=self._clock.timestamp_ns(),
+            )
+            await self._submit_order(submit_cmd)
     
     def _sign_order(self, order_params: Dict[str, Any]) -> str:
         """
@@ -790,9 +782,14 @@ class DydxV4ExecutionClient(LiveExecutionClient):
             self._log.error(f"Error getting account: {e}")
             return None
     
-    async def _submit_order(self, order):
+    async def _submit_order(self, command):
         """
         Submit an order to dYdX v4 with wallet signature.
+        
+        This is called by the base class submit_order() method.
+        
+        Args:
+            command: SubmitOrder command containing the order
         
         Flow:
         1. Prepare order parameters
@@ -800,6 +797,9 @@ class DydxV4ExecutionClient(LiveExecutionClient):
         3. Submit to dYdX validator via REST
         4. Monitor order status
         """
+        # Extract order from command
+        order = command.order
+        
         print(f"🔵 dYdX _submit_order called: {order.side} {order.quantity} {order.instrument_id}")
         self._log.info(f"Order submission: {order.side} {order.quantity} {order.instrument_id}")
         
@@ -829,12 +829,49 @@ class DydxV4ExecutionClient(LiveExecutionClient):
         if not self.wallet_account:
             self._log.warning("No wallet configured - running in paper trading mode")
             
-            # Generate accepted event
-            self._generate_order_accepted(order)
+            # Generate accepted event using Nautilus method
+            venue_order_id = VenueOrderId(f"DYDX-{int(time.time() * 1000)}")
+            
+            self.generate_order_accepted(
+                strategy_id=order.strategy_id,
+                instrument_id=order.instrument_id,
+                client_order_id=order.client_order_id,
+                venue_order_id=venue_order_id,
+                ts_event=self._clock.timestamp_ns(),
+            )
+            self._log.info(f"Order accepted (paper): {order.client_order_id}")
             
             # Simulate fill after 1 second
             await asyncio.sleep(1)
-            self._generate_order_filled(order)
+            
+            # Get current market price from cache
+            quote = self._cache.quote_tick(order.instrument_id)
+            if quote:
+                fill_price = (quote.bid_price.as_decimal() + quote.ask_price.as_decimal()) / Decimal('2')
+            else:
+                fill_price = Decimal('100000.0')  # Fallback
+            
+            from nautilus_trader.model.identifiers import TradeId
+            from nautilus_trader.model.enums import LiquiditySide
+            
+            self.generate_order_filled(
+                strategy_id=order.strategy_id,
+                instrument_id=order.instrument_id,
+                client_order_id=order.client_order_id,
+                venue_order_id=venue_order_id,
+                venue_position_id=None,
+                trade_id=TradeId(f"TRADE-{int(time.time() * 1000)}"),
+                order_side=order.side,
+                order_type=order.order_type,
+                last_qty=order.quantity,
+                last_px=Price.from_str(str(fill_price)),
+                quote_currency=Currency.from_str("USD"),
+                commission=Money(0, Currency.from_str("USD")),
+                liquidity_side=LiquiditySide.TAKER,
+                ts_event=self._clock.timestamp_ns(),
+            )
+            self._log.info(f"Order filled (paper): {order.client_order_id} @ {fill_price}")
+            
             return
         
         try:
@@ -872,9 +909,15 @@ class DydxV4ExecutionClient(LiveExecutionClient):
                     data = json.loads(response_text)
                     self._log.info(f"Order accepted: {data}")
                     
-                    # Generate accepted event
-                    venue_order_id = data.get('order', {}).get('id', f"DYDX-{timestamp}")
-                    self._generate_order_accepted(order, venue_order_id)
+                    # Generate accepted event using Nautilus method
+                    venue_order_id = VenueOrderId(data.get('order', {}).get('id', f"DYDX-{timestamp}"))
+                    self.generate_order_accepted(
+                        strategy_id=order.strategy_id,
+                        instrument_id=order.instrument_id,
+                        client_order_id=order.client_order_id,
+                        venue_order_id=venue_order_id,
+                        ts_event=self._clock.timestamp_ns(),
+                    )
                     
                     # Start monitoring order status
                     self._loop.create_task(self._monitor_order(order, venue_order_id))
@@ -882,12 +925,24 @@ class DydxV4ExecutionClient(LiveExecutionClient):
                 else:
                     error_msg = f"Order rejected: {response.status} - {response_text}"
                     self._log.error(error_msg)
-                    self._generate_order_rejected(order, error_msg)
+                    self.generate_order_rejected(
+                        strategy_id=order.strategy_id,
+                        instrument_id=order.instrument_id,
+                        client_order_id=order.client_order_id,
+                        reason=error_msg,
+                        ts_event=self._clock.timestamp_ns(),
+                    )
                     
         except Exception as e:
             error_msg = f"Order submission failed: {str(e)}"
             self._log.error(error_msg)
-            self._generate_order_rejected(order, error_msg)
+            self.generate_order_rejected(
+                strategy_id=order.strategy_id,
+                instrument_id=order.instrument_id,
+                client_order_id=order.client_order_id,
+                reason=error_msg,
+                ts_event=self._clock.timestamp_ns(),
+            )
     
     async def _monitor_order(self, order, venue_order_id: str):
         """Monitor order status until filled or canceled."""
@@ -907,11 +962,38 @@ class DydxV4ExecutionClient(LiveExecutionClient):
                         
                         if status == 'FILLED':
                             # Generate fill event
-                            self._generate_order_filled_from_data(order, order_data, venue_order_id)
+                            from nautilus_trader.model.identifiers import TradeId
+                            from nautilus_trader.model.enums import LiquiditySide
+                            
+                            fill_price = Price.from_str(order_data.get('price', '0'))
+                            fill_qty = Quantity.from_str(order_data.get('size', '0'))
+                            
+                            self.generate_order_filled(
+                                strategy_id=order.strategy_id,
+                                instrument_id=order.instrument_id,
+                                client_order_id=order.client_order_id,
+                                venue_order_id=VenueOrderId(venue_order_id),
+                                venue_position_id=None,
+                                trade_id=TradeId(order_data.get('id', f"TRADE-{int(time.time() * 1000)}")),
+                                order_side=order.side,
+                                order_type=order.order_type,
+                                last_qty=fill_qty,
+                                last_px=fill_price,
+                                quote_currency=Currency.from_str("USD"),
+                                commission=Money(0, Currency.from_str("USD")),
+                                liquidity_side=LiquiditySide.TAKER,
+                                ts_event=self._clock.timestamp_ns(),
+                            )
                             return
                         elif status in ['CANCELED', 'REJECTED']:
                             # Generate rejection
-                            self._generate_order_rejected(order, f"Order {status.lower()}")
+                            self.generate_order_rejected(
+                                strategy_id=order.strategy_id,
+                                instrument_id=order.instrument_id,
+                                client_order_id=order.client_order_id,
+                                reason=f"Order {status.lower()}",
+                                ts_event=self._clock.timestamp_ns(),
+                            )
                             return
                 
                 await asyncio.sleep(1)
@@ -925,106 +1007,7 @@ class DydxV4ExecutionClient(LiveExecutionClient):
         # Timeout
         self._log.warning(f"Order monitoring timeout for {venue_order_id}")
     
-    def _generate_order_filled_from_data(self, order, order_data: Dict, venue_order_id: str):
-        """Generate order filled event from dYdX order data."""
-        from nautilus_trader.core.uuid import UUID4
-        
-        fill_price = Price.from_str(order_data.get('price', '0'))
-        fill_qty = Quantity.from_str(order_data.get('size', '0'))
-        
-        # Calculate commission (dYdX charges 0.05% taker fee)
-        notional = float(fill_price) * float(fill_qty)
-        commission = Money(notional * 0.0005, Currency.from_str("USD"))
-        
-        event = OrderFilled(
-            trader_id=order.trader_id,
-            strategy_id=order.strategy_id,
-            instrument_id=order.instrument_id,
-            client_order_id=order.client_order_id,
-            venue_order_id=VenueOrderId(venue_order_id),
-            account_id=AccountId(f"{self.venue}-{self.account_number}"),
-            trade_id=UUID4(),
-            order_side=order.side,
-            order_type=order.order_type,
-            last_qty=fill_qty,
-            last_px=fill_price,
-            currency=Currency.from_str("USD"),
-            commission=commission,
-            liquidity_side=None,
-            event_id=UUID4(),
-            ts_event=self._clock.timestamp_ns(),
-            ts_init=self._clock.timestamp_ns(),
-        )
-        
-        self._send_order_event(event)
-    
-    def _generate_order_accepted(self, order, venue_order_id: str = None):
-        """Generate order accepted event."""
-        from nautilus_trader.core.uuid import UUID4
-        
-        if not venue_order_id:
-            venue_order_id = f"DYDX-{int(time.time() * 1000)}"
-        
-        event = OrderAccepted(
-            trader_id=order.trader_id,
-            strategy_id=order.strategy_id,
-            instrument_id=order.instrument_id,
-            client_order_id=order.client_order_id,
-            venue_order_id=VenueOrderId(venue_order_id),
-            account_id=AccountId(f"{self.venue}-{self.account_number}"),
-            event_id=UUID4(),
-            ts_event=self._clock.timestamp_ns(),
-            ts_init=self._clock.timestamp_ns(),
-        )
-        
-        self._send_order_event(event)
-    
-    def _generate_order_filled(self, order):
-        """Generate order filled event (for paper trading)."""
-        from nautilus_trader.core.uuid import UUID4
-        
-        # Get current market price (simplified)
-        fill_price = Price.from_str("100000.0")  # Would fetch from market data
-        
-        event = OrderFilled(
-            trader_id=order.trader_id,
-            strategy_id=order.strategy_id,
-            instrument_id=order.instrument_id,
-            client_order_id=order.client_order_id,
-            venue_order_id=VenueOrderId(f"DYDX-{int(time.time() * 1000)}"),
-            account_id=AccountId(f"{self.venue}-{self.account_number}"),
-            trade_id=UUID4(),
-            order_side=order.side,
-            order_type=order.order_type,
-            last_qty=order.quantity,
-            last_px=fill_price,
-            currency=Currency.from_str("USD"),
-            commission=Money(2.50, Currency.from_str("USD")),
-            liquidity_side=None,
-            event_id=UUID4(),
-            ts_event=self._clock.timestamp_ns(),
-            ts_init=self._clock.timestamp_ns(),
-        )
-        
-        self._send_order_event(event)
-    
-    def _generate_order_rejected(self, order, reason: str):
-        """Generate order rejected event."""
-        from nautilus_trader.core.uuid import UUID4
-        
-        event = OrderRejected(
-            trader_id=order.trader_id,
-            strategy_id=order.strategy_id,
-            instrument_id=order.instrument_id,
-            client_order_id=order.client_order_id,
-            account_id=AccountId(f"{self.venue}-{self.account_number}"),
-            reason=reason,
-            event_id=UUID4(),
-            ts_event=self._clock.timestamp_ns(),
-            ts_init=self._clock.timestamp_ns(),
-        )
-        
-        self._send_order_event(event)
+
 
 
     async def _subscribe_funding_rates(self, instrument_id: InstrumentId):

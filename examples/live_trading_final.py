@@ -28,6 +28,9 @@ from nautilus_trader.risk.engine import RiskEngine
 from nautilus_trader.execution.engine import ExecutionEngine
 from nautilus_trader.data.engine import DataEngine
 from nautilus_trader.common.enums import LogLevel
+from nautilus_trader.common import Environment
+from nautilus_trader.trading.trader import Trader
+from nautilus_trader.core.uuid import UUID4
 import logging
 
 from nautilus_trader.adapters.binance.factories import (
@@ -147,6 +150,7 @@ class LiveTradingSystem:
         self.data_engine = None
         self.risk_engine = None
         self.exec_engine = None
+        self.trader = None  # The Trader instance that wires everything together
         
         self.dydx_data_client = None
         self.dydx_exec_client = None
@@ -290,10 +294,17 @@ class LiveTradingSystem:
         )
         
         # Register adapters
+        print("   Registering data clients...")
         self.data_engine.register_client(self.binance_data_client)
         self.data_engine.register_client(self.dydx_data_client)
+        print("   Registering execution clients...")
         self.exec_engine.register_client(self.binance_exec_client)
+        print(f"     ✅ Registered Binance exec client: {self.binance_exec_client.id}")
         self.exec_engine.register_client(self.dydx_exec_client)
+        print(f"     ✅ Registered dYdX exec client: {self.dydx_exec_client.id}")
+        
+        # Verify registration
+        print(f"   Execution engine has {len(list(self.exec_engine.registered_clients))} clients")
         
         # Connect to exchanges
         print("   Connecting to Binance...")
@@ -385,6 +396,23 @@ class LiveTradingSystem:
             emergency_exit_loss_pct=10.0,
         )
         
+        # Create Trader instance to wire everything together
+        print("   Creating Trader...")
+        self.trader = Trader(
+            trader_id=self.trader_id,
+            instance_id=UUID4(),
+            msgbus=self.msgbus,
+            cache=self.cache,
+            portfolio=self.portfolio,
+            data_engine=self.data_engine,
+            risk_engine=self.risk_engine,
+            exec_engine=self.exec_engine,
+            clock=self.clock,
+            environment=Environment.LIVE,
+            loop=self.loop,
+        )
+        
+        # Create strategy
         self.strategy = DeltaNeutralStrategy(config=strategy_config)
         
         # Force strategy to use Python logging
@@ -392,15 +420,10 @@ class LiveTradingSystem:
         strategy_logger = logging.getLogger('DeltaNeutralStrategy')
         strategy_logger.setLevel(logging.INFO)
         
-        self.strategy.register(
-            trader_id=self.trader_id,
-            portfolio=self.portfolio,
-            msgbus=self.msgbus,
-            cache=self.cache,
-            clock=self.clock,
-        )
+        # Add strategy to trader (this properly wires it to exec engine)
+        self.trader.add_strategy(self.strategy)
         
-        logging.info(f"Strategy registered: {self.strategy}")
+        logging.info(f"Strategy added to trader: {self.strategy}")
         
         # Create dashboard
         self.dashboard = TradingDashboard(self.portfolio, self.cache)

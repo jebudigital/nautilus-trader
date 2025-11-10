@@ -74,6 +74,12 @@ class DeltaNeutralStrategy(Strategy):
         # Position tracking
         self.target_delta = Decimal('0')  # Always zero for delta-neutral
         
+        # Order tracking for blocking behavior
+        self.pending_entry_orders = set()  # Track orders we're waiting for
+        self.is_entering_position = False  # Flag to block evaluation during entry
+        self.entry_start_time = 0  # Track when we started entering
+        self.entry_timeout_seconds = 60  # Timeout after 60 seconds
+        
     def on_start(self):
         """Called when strategy starts."""
         print("\n" + "="*60)
@@ -226,19 +232,55 @@ class DeltaNeutralStrategy(Strategy):
         """Handle order accepted event."""
         print(f"  ✅ Order accepted: {event.client_order_id}")
         self.log.info(f"Order accepted: {event}")
+        
+        # Track this order if it's part of entry
+        if event.client_order_id in self.pending_entry_orders:
+            print(f"     ⏳ Waiting for fill...")
     
     def on_order_rejected(self, event):
         """Handle order rejected event."""
         print(f"  ❌ Order rejected: {event.client_order_id} - {event.reason}")
         self.log.error(f"Order rejected: {event}")
+        
+        # Remove from pending and unblock if this was an entry order
+        if event.client_order_id in self.pending_entry_orders:
+            self.pending_entry_orders.discard(event.client_order_id)
+            if not self.pending_entry_orders:
+                self.is_entering_position = False
+                print(f"     🔓 Entry unblocked (order rejected)")
     
     def on_order_filled(self, event):
         """Handle order filled event."""
         print(f"  💰 Order filled: {event.client_order_id} - {event.last_qty} @ {event.last_px}")
         self.log.info(f"Order filled: {event}")
+        
+        # Remove from pending orders
+        if event.client_order_id in self.pending_entry_orders:
+            self.pending_entry_orders.discard(event.client_order_id)
+            print(f"     ✅ Entry order filled ({len(self.pending_entry_orders)} remaining)")
+            
+            # Unblock evaluation when all entry orders are filled
+            if not self.pending_entry_orders:
+                self.is_entering_position = False
+                print(f"     🔓 All entry orders filled - evaluation unblocked!")
     
     def _evaluate_opportunity(self):
         """Evaluate if we should open/close/rebalance positions."""
+        # Block evaluation if we're waiting for entry orders to fill
+        if self.is_entering_position:
+            # Check for timeout
+            current_time = self.clock.timestamp_ns()
+            elapsed_seconds = (current_time - self.entry_start_time) / 1_000_000_000
+            
+            if elapsed_seconds > self.entry_timeout_seconds:
+                print(f"  ⏰ Entry timeout after {elapsed_seconds:.0f}s - unblocking")
+                self.log.warning(f"Entry timeout - {len(self.pending_entry_orders)} orders still pending")
+                self.is_entering_position = False
+                self.pending_entry_orders.clear()
+            else:
+                print(f"  🔒 Blocked - waiting for {len(self.pending_entry_orders)} entry orders to fill ({elapsed_seconds:.0f}s elapsed)")
+                return
+        
         # Get current positions for instruments
         spot_positions = self.cache.positions_open(instrument_id=self.spot_instrument_id)
         perp_positions = self.cache.positions_open(instrument_id=self.perp_instrument_id)
@@ -368,6 +410,11 @@ class DeltaNeutralStrategy(Strategy):
         print(f"     Spot: BUY {spot_quantity} {self.spot_instrument_id}")
         print(f"     Perp: SELL {perp_quantity} {self.perp_instrument_id}")
         
+        # Set blocking flag BEFORE submitting orders
+        self.is_entering_position = True
+        self.entry_start_time = self.clock.timestamp_ns()
+        print(f"     🔒 Blocking evaluation until orders fill...")
+        
         # Submit orders
         # 1. Buy spot
         spot_order = self.order_factory.market(
@@ -379,6 +426,7 @@ class DeltaNeutralStrategy(Strategy):
         self.log.info(f"Submitting spot order: {spot_order}")
         print(f"     🔵 Calling submit_order for spot...")
         self.submit_order(spot_order)
+        self.pending_entry_orders.add(spot_order.client_order_id)
         print(f"     ✅ Spot order submitted: {spot_order.client_order_id}")
         print(f"     📊 Order state: {spot_order.status}")
         
@@ -391,7 +439,9 @@ class DeltaNeutralStrategy(Strategy):
         )
         self.log.info(f"Submitting perp order: {perp_order}")
         self.submit_order(perp_order)
+        self.pending_entry_orders.add(perp_order.client_order_id)
         print(f"     ✅ Perp order submitted: {perp_order.client_order_id}")
+        print(f"     ⏳ Waiting for {len(self.pending_entry_orders)} orders to fill before next evaluation...")
     
     def _check_rebalance(self, current_delta: Decimal, spot_delta: Decimal, perp_delta: Decimal):
         """Check if we need to rebalance to restore delta neutrality."""
