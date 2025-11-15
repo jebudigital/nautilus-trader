@@ -1,224 +1,274 @@
-# Crypto Trading Engine with NautilusTrader
+# Hyperliquid + 0x Delta Neutral Trading Bot
 
-Professional algorithmic trading system for cryptocurrency markets using NautilusTrader framework.
+**Automated delta neutral trading on Arbitrum L2 using NautilusTrader**
 
-## Features
+## Overview
 
-- ✅ **Delta Neutral Strategy** - Earn funding rates while staying market neutral
-- ✅ **Backtesting** - Test strategies on historical data
-- ✅ **Paper Trading** - Practice with testnet funds
-- ✅ **Live Trading** - Trade on mainnet with real money
-- ✅ **Multi-Exchange** - Binance (spot) + dYdX V4 (perpetuals)
-- ✅ **Real-time Dashboard** - Monitor positions, P&L, and orders
+This bot implements a delta neutral strategy that earns funding rates while maintaining zero directional exposure:
+
+- **Long spot** via 0x Protocol (aggregates Uniswap, SushiSwap, Curve, etc.)
+- **Short perpetuals** on Hyperliquid
+- **Network:** Arbitrum L2 (100x cheaper gas than Ethereum)
+- **Returns:** 5-15% APY from funding rates
+
+## Why This Stack?
+
+### Arbitrum L2
+- **100x cheaper gas:** $0.10 vs $10 on Ethereum
+- **Fast finality:** 2 seconds
+- **Full EVM compatibility**
+
+### 0x Protocol
+- **DEX aggregator:** Best prices across Uniswap, SushiSwap, Curve, Balancer
+- **No protocol fees:** Only gas costs
+- **Optimized routing:** Automatic best execution
+
+### Hyperliquid
+- **Decentralized perpetuals** on Arbitrum
+- **No API keys:** Wallet-based authentication
+- **Maker rebates:** -0.002% (you get paid to make orders!)
+- **Up to 50x leverage**
 
 ## Quick Start
 
-### 1. Installation
+### 1. Install Dependencies
 
 ```bash
-# Install dependencies
 pip install -r requirements.txt
+```
 
-# Copy environment template
+### 2. Configure
+
+```bash
 cp .env.example .env
+nano .env
 ```
 
-### 2. Configure Credentials
+Add your configuration:
+```bash
+# Free Arbitrum RPC
+ARBITRUM__RPC_URL=https://arb1.arbitrum.io/rpc
 
-Edit `.env`:
+# Your wallet (same for both Hyperliquid and 0x)
+ARBITRUM__PRIVATE_KEY=0x...
+ARBITRUM__WALLET_ADDRESS=0x...
+
+# Hyperliquid settings
+HYPERLIQUID__PRIVATE_KEY=0x...  # Same as above
+HYPERLIQUID__WALLET_ADDRESS=0x...  # Same as above
+HYPERLIQUID__TESTNET=true  # Start with testnet!
+
+# Strategy parameters
+STRATEGY__MAX_POSITION_SIZE_USD=1000.0
+STRATEGY__MIN_FUNDING_RATE_APY=5.0
+STRATEGY__REBALANCE_THRESHOLD_PCT=5.0
+```
+
+### 3. Get Free Arbitrum RPC
+
+**Option 1: Public RPC (Free)**
+```
+https://arb1.arbitrum.io/rpc
+```
+
+**Option 2: Alchemy (Recommended - 300M compute units/month free)**
+1. Sign up at https://www.alchemy.com/
+2. Create app: Arbitrum One
+3. Copy HTTPS endpoint
+
+### 4. Fund Your Wallet
+
+You need USDC on Arbitrum:
+
+**Option A: Bridge from Ethereum**
+- Use https://bridge.arbitrum.io/
+
+**Option B: Buy on CEX and withdraw**
+- Buy USDT/USDC on Binance/Coinbase
+- Withdraw to Arbitrum network
+- Swap USDT → USDC if needed (via 0x)
+
+**Option C: Buy directly on Arbitrum**
+- Use on-ramp services that support Arbitrum
+
+### 5. Run
 
 ```bash
-# Binance
-BINANCE__API_KEY=your_api_key
-BINANCE__API_SECRET=your_api_secret
-BINANCE__SANDBOX=false  # false for mainnet, true for testnet
+# Test connections
+./quickstart.sh
 
-# dYdX V4 (only needs private key, no API keys!)
-DYDX__NETWORK=mainnet  # or testnet
-DYDX__PRIVATE_KEY=0xyour_private_key
-DYDX__WALLET_ADDRESS=dydx1your_address
+# Run on testnet (recommended first!)
+python examples/hyperliquid_zerox_live.py
 ```
 
-### 3. Run
+## How It Works
 
-**Backtesting:**
-```bash
-python3 examples/backtest_delta_neutral.py
+### Strategy
+
+1. **Monitor funding rates** on Hyperliquid
+2. **When funding > 5% APY:**
+   - Buy ETH on 0x (spot)
+   - Short ETH on Hyperliquid (perp)
+3. **Maintain delta neutral** (net exposure = 0)
+4. **Earn funding rate** (5-15% APY)
+5. **Rebalance** when delta drifts > 5%
+
+### Example Trade
+
+```
+Entry:
+  0x (Arbitrum):  BUY 1 ETH @ $2,000 (spot)
+  Hyperliquid:    SELL 1 ETH @ $2,000 (perp)
+  Net Delta:      0 ETH (neutral)
+  Gas Cost:       ~$0.10
+
+Market moves to $2,200:
+  Spot P&L:       +$200 (long profit)
+  Perp P&L:       -$200 (short loss)
+  Net P&L:        $0 (neutral)
+
+Funding Rate: +0.01% every 8 hours
+  = ~11% APY (passive income!)
 ```
 
-**Live Trading:**
-```bash
-python3 examples/live_trading_final.py
-```
+## Costs
+
+| Item | Cost |
+|------|------|
+| Gas (0x swap) | $0.10 |
+| Gas (Hyperliquid order) | $0.05 |
+| 0x Protocol fee | $0 |
+| Hyperliquid maker fee | -0.002% (rebate!) |
+| **Total per cycle** | **~$0.15** |
+
+**Compare to Ethereum:** $10-50 per cycle (100x more expensive!)
 
 ## Project Structure
 
 ```
 crypto-trading-engine/
 ├── src/crypto_trading_engine/
-│   ├── strategies/
-│   │   └── delta_neutral_nautilus.py    # Delta neutral strategy
-│   └── adapters/
-│       ├── dydx_v4_nautilus_adapter.py  # dYdX V4 adapter
-│       └── binance_adapter.py           # Binance adapter
+│   ├── adapters/
+│   │   ├── hyperliquid_adapter.py    # Hyperliquid (WebSocket)
+│   │   └── zerox_adapter.py          # 0x Protocol (Arbitrum)
+│   └── strategies/
+│       └── hyperliquid_zerox_delta_neutral.py
 ├── examples/
-│   ├── backtest_delta_neutral.py        # Backtesting script
-│   └── live_trading_final.py            # Live trading script
-├── scripts/
-│   ├── check_positions.py               # Check open positions
-│   ├── check_balances.py                # Check account balances
-│   └── test_dydx_connection.py          # Test dYdX connection
-├── docs/
-│   └── live_trading_setup.md            # Detailed setup guide
-├── .env                                  # Configuration (create from .env.example)
-└── README.md                             # This file
+│   ├── hyperliquid_zerox_live.py     # Live trading
+│   └── hyperliquid_zerox_backtest.py # Backtesting
+├── .env.example                       # Config template
+├── requirements.txt                   # Dependencies
+└── README.md                          # This file
 ```
 
-## Strategy: Delta Neutral
+## Features
 
-The delta neutral strategy:
+### ✅ Implemented
 
-1. **Long BTC spot** on Binance
-2. **Short BTC perpetual** on dYdX
-3. **Net delta ≈ 0** (market neutral)
-4. **Earn funding rates** on the short position
+- [x] Hyperliquid adapter with WebSocket (real-time data)
+- [x] 0x Protocol adapter (DEX aggregation)
+- [x] Delta neutral strategy
+- [x] Real-time price updates
+- [x] Order execution
+- [x] Position management
 
-### How It Works
+### 🚧 TODO
 
-```
-Market goes UP:
-  Spot: +$100 profit
-  Perp: -$100 loss
-  Net: $0 (neutral)
-  
-Market goes DOWN:
-  Spot: -$100 loss
-  Perp: +$100 profit
-  Net: $0 (neutral)
-  
-Funding Rate: +0.01% every 8 hours
-  = ~11% APY (passive income!)
-```
+- [ ] Historical data loading (for backtesting)
+- [ ] Order event handling (fill/cancel events)
+- [ ] Account state management
+- [ ] Performance analytics
+- [ ] Multi-pair support
 
-### Configuration
+## Configuration
 
-Edit strategy parameters in `examples/live_trading_final.py`:
+### Strategy Parameters
+
+Edit in `examples/hyperliquid_zerox_live.py`:
 
 ```python
-strategy_config = DeltaNeutralConfig(
-    spot_instrument="BTCUSDT.BINANCE",
-    perp_instrument="BTC-USD.DYDX_V4",
-    max_position_size_usd=30.0,        # Position size
-    max_total_exposure_usd=120.0,      # Total capital
+strategy_config = HyperliquidZeroXConfig(
+    spot_instrument="WETHUSDC.ZEROX",
+    perp_instrument="ETH-PERP.HYPERLIQUID",
+    max_position_size_usd=1000.0,      # Position size
     rebalance_threshold_pct=5.0,       # Rebalance at 5% drift
     min_funding_rate_apy=5.0,          # Min 5% APY to enter
-    max_leverage=2.0,                  # Max 2x leverage
+    max_leverage=3.0,                  # Max 3x leverage
     emergency_exit_loss_pct=10.0,      # Stop loss at 10%
 )
 ```
 
-## Monitoring
+## Safety
 
-The live trading script includes a real-time dashboard showing:
+1. **Start with testnet** (`HYPERLIQUID__TESTNET=true`)
+2. **Small amounts first** ($100-500)
+3. **Monitor closely** (first 24 hours)
+4. **Set stop losses** (10% max loss)
+5. **Keep private keys secure**
+6. **Use separate wallet** for trading
 
-- ⏱️ Runtime and start time
-- 💰 Portfolio balance and equity
-- 📊 Open positions with P&L
-- 📝 Recent orders
-- ⚖️ Delta exposure status
+## Performance Expectations
 
-Updates every 5 seconds automatically.
+### Funding Rates
+- **Typical:** 5-15% APY
+- **Good:** 15-30% APY
+- **Excellent:** 30%+ APY
 
-## Safety Features
+### Costs
+- **Gas:** ~$0.15 per cycle
+- **Net profit:** Funding rate - gas costs
 
-1. **Position Limits** - Maximum position sizes enforced
-2. **Stop Loss** - Automatic exit on large losses
-3. **Rebalancing** - Maintains delta neutral exposure
-4. **Funding Rate Check** - Only enters when profitable
-5. **Paper Trading** - Test on testnet first
+### Capital Requirements
+- **Minimum:** $500
+- **Recommended:** $5,000+
+- **Optimal:** $50,000+ (better diversification)
 
-## Getting Help
+## Risks
 
-### Check Balances
-```bash
-python3 scripts/check_balances.py
-```
-
-### Check Positions
-```bash
-python3 scripts/check_positions.py
-```
-
-### Test Connection
-```bash
-python3 scripts/test_dydx_connection.py
-```
-
-## Important Notes
-
-### dYdX V4 Authentication
-
-dYdX V4 is **fully decentralized** and uses **wallet signatures only**:
-
-- ✅ Only need: Private key
-- ❌ Don't need: API key, API secret, passphrase
-
-This is different from dYdX V3 and other centralized exchanges.
-
-### Security
-
-- 🔒 Never share your private keys
-- 🔒 Use separate wallets for trading
-- 🔒 Start with small amounts
-- 🔒 Test on testnet first
-- 🔒 Keep `.env` in `.gitignore`
-
-### Risks
-
-- ⚠️ You can lose money
-- ⚠️ Market volatility can cause losses
 - ⚠️ Funding rates can turn negative
-- ⚠️ Technical issues can occur
-- ⚠️ Always monitor your positions
+- ⚠️ Liquidation risk on Hyperliquid
+- ⚠️ Smart contract risk (0x, Hyperliquid)
+- ⚠️ Slippage on large trades
+- ⚠️ Market volatility during rebalancing
 
 ## Troubleshooting
 
-### "Invalid API Key" (Binance)
-- Verify API key is for mainnet, not testnet
-- Check IP restrictions in Binance settings
-- Ensure trading permissions are enabled
+### "Connection refused"
+- Check Arbitrum RPC URL is correct
+- Try public RPC: `https://arb1.arbitrum.io/rpc`
+- Verify firewall settings
 
-### "Account not found" (dYdX)
-- Deposit funds to activate account
-- Verify you're on correct network (mainnet/testnet)
-- Check wallet address is correct
+### "Insufficient balance"
+- Ensure you have USDC on Arbitrum
+- Check minimum balance requirements
+- Verify wallet address is correct
 
-### "Insufficient Balance"
-- Check balances on both exchanges
-- Ensure you have enough for fees
-- Reduce position sizes
+### "Invalid signature"
+- Verify private key is correct
+- Check wallet address matches private key
+- Ensure no extra spaces in .env file
 
-## Performance
+### "Gas price too high"
+- Wait for lower gas prices
+- Arbitrum gas is usually very low (~$0.10)
+- Check network congestion
 
-Typical performance (varies by market conditions):
+## Resources
 
-- **Funding Rate APY:** 5-15%
-- **Risk:** Low (market neutral)
-- **Capital Required:** $100+ recommended
-- **Time Commitment:** Automated (check daily)
+### Documentation
+- [Hyperliquid Docs](https://hyperliquid.gitbook.io/)
+- [0x Docs](https://0x.org/docs)
+- [Arbitrum Docs](https://docs.arbitrum.io/)
+- [NautilusTrader Docs](https://nautilustrader.io/)
 
-## Roadmap
-
-- [ ] Web UI dashboard
-- [ ] Multiple trading pairs
-- [ ] Advanced risk management
-- [ ] Performance analytics
-- [ ] Telegram notifications
-- [ ] Cloud deployment guide
+### APIs
+- [Hyperliquid API](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api)
+- [0x API](https://0x.org/docs/api)
+- [Alchemy RPC](https://www.alchemy.com/)
 
 ## License
 
-MIT License - See LICENSE file
+MIT License
 
 ## Disclaimer
 
@@ -226,6 +276,8 @@ This software is for educational purposes. Trading cryptocurrencies involves ris
 
 ---
 
-**Ready to start?** Run `python3 examples/live_trading_final.py`
+**Ready to trade?** Run `./quickstart.sh` and get started!
 
-**Questions?** Check `docs/live_trading_setup.md` for detailed setup instructions.
+**Questions?** Open an issue or check the docs.
+
+**Note:** All old files (Binance, dYdX, WazirX, etc.) have been removed. This is a clean, focused implementation of Hyperliquid + 0x on Arbitrum L2.
